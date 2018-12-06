@@ -3570,6 +3570,116 @@ cgi_child( httpd_conn* hc )
     _exit( 1 );
 }
 
+int createConnSock()
+{
+    int sockfd = -1;
+    int siResult;
+    socklen_t serverLen;
+    struct sockaddr_in serverAddr = {0};
+    
+    sockfd = socket (AF_INET,SOCK_DGRAM,0);
+    if(sockfd < 0 )
+    {
+        syslog( LOG_ERR, "create fastcgi internal error !" );
+        return sockfd;
+    }
+
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(6870);
+    serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    serverLen = sizeof(serverAddr);
+
+    /*  Now connect our socket to the server's socket.  */
+
+    //syslog( LOG_ERR, "connect .... !" );
+    siResult = connect(sockfd, (struct sockaddr *)&serverAddr, serverLen);
+    //syslog( LOG_ERR, "connect end .... !" );
+    
+    if(siResult == -1) {
+        close(sockfd);
+        sockfd = -1;
+        syslog( LOG_ERR, "oops: client2");
+        return sockfd;
+    }
+   
+    return sockfd;
+}
+
+typedef struct tagLocalMsg
+{
+    unsigned int ulMsgType;
+    unsigned int ulMsgLen;
+    char data[0];
+}tLocalMsg;
+#define M_MSG_END "LocalCommunicationCurrentEnd"
+#define M_MSG_TYPE_END (0XFFFFFFFF)
+static int fastcgi( httpd_conn* hc )
+{
+    static int siLocalsockfd = -1;
+    tLocalMsg stMst = {0};
+    tLocalMsg *pstMsg = NULL;
+    char buf[4*1024] = {0};
+    
+    if(siLocalsockfd < 0)
+    {
+        siLocalsockfd = createConnSock();
+        if(siLocalsockfd < 0)
+        {
+            syslog( LOG_ERR, "init local %d-%s!",errno,strerror(errno));
+        }
+        syslog( LOG_ERR, "start local communication OK!",errno,strerror(errno));
+    }
+    
+    
+    stMst.ulMsgType = 110;
+    if(send(siLocalsockfd,&stMst,sizeof(stMst),0) < 0)
+    {
+        syslog( LOG_ERR, "send to local error!");
+        httpd_send_err(
+            hc, 503, httpd_err503title, "", httpd_err503form,
+            hc->encodedurl );
+        return -1;
+    }
+    
+    while(1)
+    {
+        struct sockaddr_in clientAddr;
+        socklen_t clientLen = sizeof(clientAddr);
+        pstMsg = (tLocalMsg *)buf; 
+
+        int r = recv(siLocalsockfd,buf,sizeof(buf),0);
+        if(r < 0 && ( errno == EINTR || errno == EAGAIN ))
+        {
+            syslog( LOG_ERR, "1 recv(%d) error %d-%s!",r,errno,strerror(errno));
+            sleep( 1 );           
+        }
+        
+        if ( r <= 0 )
+        {
+            syslog( LOG_ERR, "2 recv(%d) error %d-%s!",r,errno,strerror(errno));
+            break;
+        }
+            
+        
+        if(M_MSG_TYPE_END != pstMsg->ulMsgType)
+        {
+            tLocalMsg *pstMsg = (tLocalMsg*)buf;
+            int siHttpWriteLength = httpd_write_fully( hc->conn_fd, pstMsg->data, pstMsg->ulMsgLen) ;
+            if ( siHttpWriteLength != r - sizeof(tLocalMsg))
+            {
+                syslog( LOG_ERR, "3 recv(%d) != write(%d) error %d-%s!",r,siHttpWriteLength,errno,strerror(errno));
+                break;
+            }  
+        }
+        else
+        {
+            syslog( LOG_ERR, "pstMsg->ulMsgType = END!");
+            break;
+        }  
+    }
+
+    return 0;
+}
 
 static int
 cgi( httpd_conn* hc )
@@ -3637,7 +3747,12 @@ really_start_request( httpd_conn* hc, struct timeval* nowP )
     char* pi;
 
     expnlen = strlen( hc->expnfilename );
-
+    
+    if (!strcasecmp(hc->expnfilename,"fastcgi"))
+    {
+        return fastcgi( hc );
+    }
+        
     /* Stat the file. */
     if ( stat( hc->expnfilename, &hc->sb ) < 0 )
 	{
@@ -3814,7 +3929,7 @@ got_one: ;
     /* Referrer check. */
     if ( ! check_referrer( hc ) )
         return -1;
-
+    
     /* Is it world-executable and in the CGI area? */
     if ( hc->hs->cgi_pattern != (char*) 0 &&
             ( hc->sb.st_mode & S_IXOTH ) &&
@@ -3825,6 +3940,7 @@ got_one: ;
     ** trying to either serve or run a non-CGI file as CGI.   Either case
     ** is prohibited.
     */
+ 
     if ( hc->sb.st_mode & S_IXOTH )
 	{
         syslog(
