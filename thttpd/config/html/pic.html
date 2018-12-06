@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+    <title></title>
+	<script src="jquery-3.3.1.min.js"></script>
+	<script>
+		$(document).ready(function(){
+			$("#btn3").click(function(){
+			$("#test3").val("Dolly Duck");
+		  });
+		});
+	</script>
+    <script type="text/javascript">
+        /*
+            定时器做图片的自动切换
+        */
+        window.onload = Init;//网页加载完成时，调用init
+        function Init()
+        {
+            //定时器,每秒钟触发ShowPicturesInOrder()函数
+            window.setInterval("ShowPicturesInOrder()", 1000);
+        }
+
+        var teacherNum = 1;
+        function ShowPicturesInOrder()
+        {
+            //获取网页中id=myImg的图片对象元素
+            var imgObj = document.getElementById("myImg")
+
+            imgObj.src = "images/" + teacherNum + ".jpg" + '?' + Math.random();
+            teacherNum++;
+
+            //总共有4张图片，显示第四张图片时，teacherNum=4
+            //第四张图片显示后，执行teacherNum++,teacherNum=5
+            if (teacherNum == 5)
+            {
+                teacherNum = 1;//回到了原点
+            }
+        }
+
+    </script>
+</head>
+<body>
+    	<img id="myImg" src="images/1.jpg" height="640" width="480" />
+	
+	<p>Input field: <input type="text" id="test3" value="Mickey Mouse"></p>	
+	<button id="btn3">设置值</button>
+</body>
+</html>
