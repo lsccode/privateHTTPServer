@@ -107,8 +107,8 @@ subdirs:
 	) ; done
 
 
-install:	installthis install-man installsubdirs
-
+install:	
+	@echo "do nothing"
 installthis:
 	-mkdir -p $(DESTDIR)$(BINDIR)
 	$(INSTALL) -m 555 -o bin -g bin thttpd $(DESTDIR)$(BINDIR)
