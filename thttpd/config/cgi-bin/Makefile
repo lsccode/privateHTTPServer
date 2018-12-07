@@ -21,7 +21,7 @@ SRC_CPP_FILES   := $(wildcard *.cpp)
 SRC_CPP_OBJS    := $(SRC_CPP_FILES:.cpp=.o)
 CURRENT_TARGET  += $(basename $(SRC_CPP_OBJS))
 
-INSTALL_PATH_DEST := /etc/thttpd/html
+INSTALL_PATH_DEST := /etc/thttpd/config/
 
 ALL += $(CURRENT_TARGET) 
 
@@ -29,6 +29,8 @@ all:$(CURRENT_TARGET)
 
 install:
 	@install -m 777 -s --strip-program=strip $(CURRENT_TARGET) $(INSTALL_PATH_DEST)
+	rsync -r ../html/* $(INSTALL_PATH_DEST)
+	rsync -r ../images $(INSTALL_PATH_DEST)
 clean:
 	@echo "clean *.o $(SRC_C_OBJS) $(SRC_CPP_OBJS) $(CURRENT_TARGET) *.d ";$(RM) $(SRC_C_OBJS) $(SRC_CPP_OBJS) $(CURRENT_TARGET) *.d *.d.*
 
