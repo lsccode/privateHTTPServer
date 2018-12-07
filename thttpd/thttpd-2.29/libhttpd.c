@@ -3627,6 +3627,7 @@ static int fastcgi( httpd_conn* hc )
         {
             syslog( LOG_ERR, "init local %d-%s!",errno,strerror(errno));
         }
+        httpd_set_ndelay(siLocalsockfd);
         syslog( LOG_ERR, "start local communication OK!",errno,strerror(errno));
     }
     
@@ -3647,20 +3648,23 @@ static int fastcgi( httpd_conn* hc )
         socklen_t clientLen = sizeof(clientAddr);
         pstMsg = (tLocalMsg *)buf; 
 
+        
         int r = recv(siLocalsockfd,buf,sizeof(buf),0);
         if(r < 0 && ( errno == EINTR || errno == EAGAIN ))
         {
             syslog( LOG_ERR, "1 recv(%d) error %d-%s!",r,errno,strerror(errno));
-            sleep( 1 );           
-        }
-        
-        if ( r <= 0 )
-        {
-            syslog( LOG_ERR, "2 recv(%d) error %d-%s!",r,errno,strerror(errno));
-            break;
-        }
+            usleep( 1 );
+            continue;
             
+        }
         
+        //if ( r <= 0 )
+        //{
+        //    syslog( LOG_ERR, "2 recv(%d) error %d-%s!",r,errno,strerror(errno));
+        //    break;
+        //}
+            
+        syslog( LOG_ERR,"recv %d",r);
         if(M_MSG_TYPE_END != pstMsg->ulMsgType)
         {
             tLocalMsg *pstMsg = (tLocalMsg*)buf;
@@ -3675,8 +3679,9 @@ static int fastcgi( httpd_conn* hc )
         {
             syslog( LOG_ERR, "pstMsg->ulMsgType = END!");
             break;
-        }  
+        }     
     }
+    syslog( LOG_ERR, "exit fastcig!");
 
     return 0;
 }
@@ -3748,7 +3753,16 @@ really_start_request( httpd_conn* hc, struct timeval* nowP )
 
     expnlen = strlen( hc->expnfilename );
     
+    syslog(LOG_ERR,
+        "expnfilename = %s",
+        hc->expnfilename);
+    
     if (!strcasecmp(hc->expnfilename,"fastcgi"))
+    {
+        return fastcgi( hc );
+    }
+    
+    if (!strcasecmp(hc->expnfilename,"liveimg.jpg"))
     {
         return fastcgi( hc );
     }
