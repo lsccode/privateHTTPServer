@@ -174,21 +174,23 @@ int main(int argc, char *argv[])
 		while(1)
 		{
 			pstMsg = (tLocalMsg *)szBuf;			
-			pstMsg->ulMsgType = 1;
+			++pstMsg->ulMsgType;
 			pstMsg->ulMsgLen = read(imagfd,pstMsg->data,3*1024);
-			
-            debug("send mesg len = %u\n",pstMsg->ulMsgLen + 8);
-			if(sendto(slSocket,szBuf,sizeof(tLocalMsg) + pstMsg->ulMsgLen,0,(struct sockaddr *)&clientAddr,clientLen) < 0)
+			           
+            int s = sendto(slSocket,szBuf,3080,0,
+                           (struct sockaddr *)&clientAddr,clientLen);
+			if(s < 0)
 			{
 				debug("send error error(%d),strerr(%s)!\n",errno,strerror(errno));
 				continue;
 			}
+            debug("send mesg slen = %u,type = %u\n",s,pstMsg->ulMsgType);
 			if(pstMsg->ulMsgLen < 3*1024)
             {
                 debug("mesg len = %u,close\n",pstMsg->ulMsgLen + 8);
                 break;  
             }
-	
+            usleep(1);
 		}
         close(imagfd);
 		++siIndex;
@@ -197,6 +199,7 @@ int main(int argc, char *argv[])
         pstMsg->ulMsgType = M_MSG_TYPE_END;
         pstMsg->ulMsgLen  = strlen(M_HTML_MSG);
         memcpy(pstMsg->data,M_MSG_END,pstMsg->ulMsgLen);
+        usleep(1);
         if(sendto(slSocket,szBuf,sizeof(tLocalMsg) + pstMsg->ulMsgLen,0,(struct sockaddr *)&clientAddr,clientLen) < 0)
         {
             debug("send error!\n");

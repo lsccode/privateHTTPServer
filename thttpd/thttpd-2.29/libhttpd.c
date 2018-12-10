@@ -81,7 +81,7 @@
 #include "timers.h"
 #include "match.h"
 #include "tdate_parse.h"
-
+#include <sys/un.h>
 #ifndef STDIN_FILENO
 #define STDIN_FILENO 0
 #endif
@@ -1974,6 +1974,7 @@ httpd_parse_request( httpd_conn* hc )
     *url++ = '\0';
     url += strspn( url, " \t\012\015" );
     protocol = strpbrk( url, " \t\012\015" );
+    
     if ( protocol == (char*) 0 )
 	{
         protocol = "HTTP/0.9";
@@ -2048,14 +2049,12 @@ httpd_parse_request( httpd_conn* hc )
     httpd_realloc_str(
         &hc->decodedurl, &hc->maxdecodedurl, strlen( hc->encodedurl ) );
     strdecode( hc->decodedurl, hc->encodedurl );
-
     httpd_realloc_str(
         &hc->origfilename, &hc->maxorigfilename, strlen( hc->decodedurl ) );
     (void) strcpy( hc->origfilename, &hc->decodedurl[1] );
     /* Special case for top-level URL. */
     if ( hc->origfilename[0] == '\0' )
         (void) strcpy( hc->origfilename, "." );
-
     /* Extract query string from encoded URL. */
     cp = strchr( hc->encodedurl, '?' );
     if ( cp != (char*) 0 )
@@ -2305,7 +2304,6 @@ httpd_parse_request( httpd_conn* hc )
     httpd_realloc_str(
         &hc->expnfilename, &hc->maxexpnfilename, strlen( hc->origfilename ) );
     (void) strcpy( hc->expnfilename, hc->origfilename );
-
     /* Tilde mapping. */
     if ( hc->expnfilename[0] == '~' )
 	{
@@ -2332,7 +2330,6 @@ httpd_parse_request( httpd_conn* hc )
             httpd_send_err( hc, 500, err500title, "", err500form, hc->encodedurl );
             return -1;
 	    }
-
     /* Expand all symbolic links in the filename.  This also gives us
     ** any trailing non-existing components, for pathinfo.
     */
@@ -2346,7 +2343,6 @@ httpd_parse_request( httpd_conn* hc )
     (void) strcpy( hc->expnfilename, cp );
     httpd_realloc_str( &hc->pathinfo, &hc->maxpathinfo, strlen( pi ) );
     (void) strcpy( hc->pathinfo, pi );
-
     /* Remove pathinfo stuff from the original filename too. */
     if ( hc->pathinfo[0] != '\0' )
 	{
@@ -2355,7 +2351,6 @@ httpd_parse_request( httpd_conn* hc )
         if ( i > 0 && strcmp( &hc->origfilename[i], hc->pathinfo ) == 0 )
             hc->origfilename[i - 1] = '\0';
 	}
-
     /* If the expanded filename is an absolute path, check that it's still
     ** within the current directory or the alternate directory.
     */
@@ -2389,7 +2384,6 @@ httpd_parse_request( httpd_conn* hc )
             return -1;
 	    }
 	}
-
     return 0;
 }
 
@@ -3613,12 +3607,120 @@ typedef struct tagLocalMsg
 }tLocalMsg;
 #define M_MSG_END "LocalCommunicationCurrentEnd"
 #define M_MSG_TYPE_END (0XFFFFFFFF)
+
+int createUnixConnSock()
+{
+    int sockfd;
+    int len;
+    //struct sockaddr_un address;
+    struct sockaddr_in address;
+    int result;
+
+    /*  Create a socket for the client.  */
+
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+
+    /*  Name the socket, as agreed with the server.  */
+
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = inet_addr("127.0.0.1");
+    address.sin_port = htons(9734);
+    len = sizeof(address);
+
+    /*  Now connect our socket to the server's socket.  */
+
+    result = connect(sockfd, (struct sockaddr *)&address, len);
+
+    if(result == -1) {
+        syslog( LOG_ERR,"connect %s:%d error ,%d : %s,","127.0.0.1",9734,errno,strerror(errno));
+        close(sockfd);
+        sockfd = -1;
+        //exit(1);
+    }
+    
+    return sockfd;
+}
+
+static int livestream( httpd_conn* hc )
+{
+    static int siLocalsockfd = -1;
+    tLocalMsg stMst = {0};
+    tLocalMsg *pstMsg = NULL;
+    
+    
+    if(siLocalsockfd < 0)
+    {
+        siLocalsockfd = createUnixConnSock();
+        if(siLocalsockfd < 0)
+        {
+            syslog( LOG_ERR, "init local %d-%s!",errno,strerror(errno));
+        }
+        else
+        {
+            //httpd_set_ndelay(siLocalsockfd);
+            syslog( LOG_ERR, "start livestream communication OK!",errno,strerror(errno));
+        }
+
+    }
+    
+    stMst.ulMsgType = 110;
+    if(send(siLocalsockfd,&stMst,sizeof(stMst),0) < 0)
+    {
+        syslog( LOG_ERR, "send to local error!");
+        httpd_send_err(
+            hc, 503, httpd_err503title, "", httpd_err503form,
+            hc->encodedurl );
+        close(siLocalsockfd);
+        siLocalsockfd = -1;
+        return -1;
+    }
+    
+    while(1)
+    {
+        struct sockaddr_in clientAddr;
+        char buf[4*1024] = {0};
+        socklen_t clientLen = sizeof(clientAddr);
+        pstMsg = (tLocalMsg *)buf; 
+
+        int r = recv(siLocalsockfd,buf,sizeof(tLocalMsg),0);
+        r += recv(siLocalsockfd,buf +sizeof(tLocalMsg),pstMsg->ulMsgLen,0);
+        if(r < 0 && ( errno == EINTR || errno == EAGAIN ))
+        {
+            syslog( LOG_ERR, "1 recv(%d) error %d-%s!",r,errno,strerror(errno));
+            usleep( 1 );
+            continue;
+            
+        }
+        //syslog( LOG_ERR,"recv mesg slen = %u,type = %u\n",r,pstMsg->ulMsgType);
+        
+        if(M_MSG_TYPE_END != pstMsg->ulMsgType)
+        {
+            httpd_clear_ndelay(hc->conn_fd);
+            tLocalMsg *pstMsg = (tLocalMsg*)buf;
+            int siHttpWriteLength = httpd_write_fully( hc->conn_fd, pstMsg->data, pstMsg->ulMsgLen) ;
+            if ( siHttpWriteLength != pstMsg->ulMsgLen)
+            {
+                syslog( LOG_ERR, "fully recv(%d) != write(%d) error %d-%s!",pstMsg->ulMsgLen,siHttpWriteLength,errno,strerror(errno));
+                break;
+            }  
+        }
+        else
+        {
+            syslog( LOG_ERR, "pstMsg->ulMsgType = END!");
+            break;
+        }     
+    }
+    syslog( LOG_ERR, "exit livestream!");
+    //close(siLocalsockfd);
+    return 0;
+}
+
 static int fastcgi( httpd_conn* hc )
 {
     static int siLocalsockfd = -1;
     tLocalMsg stMst = {0};
     tLocalMsg *pstMsg = NULL;
-    char buf[4*1024] = {0};
+    
     
     if(siLocalsockfd < 0)
     {
@@ -3627,8 +3729,12 @@ static int fastcgi( httpd_conn* hc )
         {
             syslog( LOG_ERR, "init local %d-%s!",errno,strerror(errno));
         }
-        httpd_set_ndelay(siLocalsockfd);
-        syslog( LOG_ERR, "start local communication OK!",errno,strerror(errno));
+        else
+        {
+            httpd_set_ndelay(siLocalsockfd);
+            syslog( LOG_ERR, "start local communication OK!",errno,strerror(errno));
+        }
+
     }
     
     
@@ -3645,6 +3751,7 @@ static int fastcgi( httpd_conn* hc )
     while(1)
     {
         struct sockaddr_in clientAddr;
+        char buf[4*1024] = {0};
         socklen_t clientLen = sizeof(clientAddr);
         pstMsg = (tLocalMsg *)buf; 
 
@@ -3654,7 +3761,7 @@ static int fastcgi( httpd_conn* hc )
         {
             syslog( LOG_ERR, "1 recv(%d) error %d-%s!",r,errno,strerror(errno));
             usleep( 1 );
-            continue;
+            //continue;
             
         }
         
@@ -3663,8 +3770,8 @@ static int fastcgi( httpd_conn* hc )
         //    syslog( LOG_ERR, "2 recv(%d) error %d-%s!",r,errno,strerror(errno));
         //    break;
         //}
-            
-        syslog( LOG_ERR,"recv %d",r);
+        syslog( LOG_ERR,"recv mesg slen = %u,type = %u\n",r,pstMsg->ulMsgType);
+        
         if(M_MSG_TYPE_END != pstMsg->ulMsgType)
         {
             tLocalMsg *pstMsg = (tLocalMsg*)buf;
@@ -3753,9 +3860,7 @@ really_start_request( httpd_conn* hc, struct timeval* nowP )
 
     expnlen = strlen( hc->expnfilename );
     
-    syslog(LOG_ERR,
-        "expnfilename = %s",
-        hc->expnfilename);
+    syslog(LOG_ERR,"[%s | %d] expnfilename = %s",__func__,__LINE__,hc->expnfilename);
     
     if (!strcasecmp(hc->expnfilename,"fastcgi"))
     {
@@ -3764,7 +3869,7 @@ really_start_request( httpd_conn* hc, struct timeval* nowP )
     
     if (!strcasecmp(hc->expnfilename,"liveimg.jpg"))
     {
-        return fastcgi( hc );
+        return livestream( hc );
     }
         
     /* Stat the file. */
@@ -4377,6 +4482,7 @@ httpd_write_fully( int fd, const char* buf, size_t nbytes )
     int nwritten;
 
     nwritten = 0;
+    errno = 0;
     while ( nwritten < nbytes )
 	{
         int r;
@@ -4385,12 +4491,21 @@ httpd_write_fully( int fd, const char* buf, size_t nbytes )
         if ( r < 0 && ( errno == EINTR || errno == EAGAIN ) )
 	    {
             sleep( 1 );
+            //syslog( LOG_NOTICE,"write ...1 %d-%s",errno,strerror(errno));
             continue;
 	    }
         if ( r < 0 )
+        {
+             //syslog( LOG_NOTICE,"write ... 2 %d-%s",errno,strerror(errno));
             return r;
+        }
+            
         if ( r == 0 )
+        {
+            // syslog( LOG_NOTICE,"write ...3 %d-%s",errno,strerror(errno));
             break;
+        }
+        //syslog( LOG_NOTICE,"write r(%d)...4 %d-%s",r,errno,strerror(errno));
         nwritten += r;
 	}
 
