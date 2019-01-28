@@ -276,12 +276,12 @@
 
 /* CONFIGURE: $PATH to use for CGI programs.
 */
-#define CGI_PATH "/usr/local/bin:/usr/ucb:/bin:/usr/bin"
+#define CGI_PATH "/usr/local/bin:/usr/ucb:/bin:/sbin:/usr/bin:/usr/sbin"
 
 /* CONFIGURE: If defined, $LD_LIBRARY_PATH to use for CGI programs.
 */
 #ifdef notdef
-#define CGI_LD_LIBRARY_PATH "/usr/local/lib:/usr/lib"
+#define CGI_LD_LIBRARY_PATH "/usr/local/lib:/usr/lib:/lib"
 #endif
 
 /* CONFIGURE: How often to run the occasional cleanup job.
